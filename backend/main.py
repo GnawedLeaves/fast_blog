@@ -1,6 +1,4 @@
-
-
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 app = FastAPI()
 
@@ -38,6 +36,19 @@ def home():
 def get_posts(): 
     return f"this is the first post: {posts_db[0]["title"]}"
 
+# returning html
 @app.get("/html/firstPost", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/html/firstPost2", response_class=HTMLResponse, include_in_schema=False)
 def get_html_post(): return f"<h1>{posts_db[0]["content"]}</h1>"
+
+
+# validation
+@app.get("/api/post/{post_id}")
+def get_validation_post(post_id: int):
+    for post in posts_db: 
+        if post.get("id") == post_id:
+            return post
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found!!!!")
+
+
