@@ -35,7 +35,7 @@ function App() {
                 <div className="flex justify-between items-center w-full ">
                   <div className="flex items-center gap-2">
                     <img
-                      src={post.author.image_file}
+                      src={post.author.image_path}
                       className="border-2 border-amber-600 w-9 h-9 rounded-full object-cover"
                     />
                     <div className="flex flex-col text-left">
@@ -46,7 +46,7 @@ function App() {
                     </div>
                   </div>
                   <div className="text-zinc-500 text-xs self-end">
-                    {dayjs(post.date_posted).format("DD/MM/YYYY HH:mm")}
+                    {dayjs(post.date_posted).format("DD MMM YYYY HH:mm")}
                   </div>
                 </div>
 

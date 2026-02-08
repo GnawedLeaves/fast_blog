@@ -3,6 +3,7 @@ export interface User {
   email: string;
   id: number;
   image_file: string;
+  image_path: string;
 }
 
 export interface Post {
