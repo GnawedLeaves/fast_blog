@@ -15,6 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware
 # Fastapi patten for type dependencies
 from typing import Annotated
 
+from contextlib import asynccontextmanager
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 # select is for db
 from sqlalchemy import select
@@ -23,10 +30,19 @@ from sqlalchemy.orm import Session
 import models
 from database import Base, engine, get_db
 
-# create db tables: looks at models that inherit from base and creates tables if they dont already exist (safe to run  multiple times: idempotent)
-Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
+# @asynccontextmanager turns this into an async context manager
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # runs at startup, begin will create an async connection
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    # shutdown
+    await engine.dispose()
+
+
+app = FastAPI(lifespan=lifespan)
 
 origins = [
     "http://localhost:5173",
@@ -142,8 +158,12 @@ def get_user_posts(user_id: int, db: Annotated[Session, Depends(get_db)]):
 
 # get post by id
 @app.get("/api/post/{post_id}", response_model=PostResponse)
-def get_post_by_id(post_id: int, db: Annotated[Session, Depends(get_db)]):
-    result = db.execute(select(models.Post).where(models.Post.id == post_id))
+async def get_post_by_id(post_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .where(models.Post.id == post_id)
+    )
     post = result.scalars().first()
     if not post:
         raise HTTPException(
@@ -154,8 +174,10 @@ def get_post_by_id(post_id: int, db: Annotated[Session, Depends(get_db)]):
 
 # get all posts
 @app.get("/api/allPosts", response_model=list[PostResponse])
-def get_all_posts(db: Annotated[Session, Depends(get_db)]):
-    result = db.execute(select(models.Post))
+async def get_all_posts(db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(
+        select(models.Post).options(selectinload(models.Post.author))
+    )
     posts = result.scalars().all()
     return posts
 
