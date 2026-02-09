@@ -1,7 +1,14 @@
 # Depends will dependency injection into routes
 from fastapi import FastAPI, HTTPException, Request, status, Depends
 from fastapi.responses import HTMLResponse
-from schema import PostCreate, PostResponse, UserResponse, UserCreate
+from schema import (
+    PostCreate,
+    PostResponse,
+    UserResponse,
+    UserCreate,
+    PostUpdate,
+    UserUpdate,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -56,57 +63,6 @@ def get_posts():
 @app.get("/html/firstPost2", response_class=HTMLResponse, include_in_schema=False)
 def get_html_post():
     return f"<h1>{posts_db[0]["content"]}</h1>"
-
-
-# validation
-@app.get("/api/post/{post_id}", include_in_schema=False)
-def get_validation_post(post_id: int):
-    for post in posts_db:
-        if post.get("id") == post_id:
-            return post
-
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND, detail="Post not found!!!!"
-    )
-
-
-# adding types
-# list[PostResponse] means a list of postresponses like PostResponse[]
-@app.get("/api/type/posts", response_model=list[PostResponse], include_in_schema=False)
-def get_posts_w_type():
-    return posts_db
-
-
-@app.get(
-    "/api/type/post/{post_id}", response_model=PostResponse, include_in_schema=False
-)
-def get_post_w_type(post_id: int):
-    for post in posts_db:
-        if post.get("id") == post_id:
-            return post
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND, detail="NO SUCH POST EXISTS HELLLO"
-    )
-
-
-# create posts old
-@app.post(
-    "/api/old/post",
-    response_model=PostResponse,
-    status_code=status.HTTP_201_CREATED,
-    include_in_schema=False,
-)
-def create_post(post: PostCreate):
-    new_id = max(p["id"] for p in posts_db) + 1 if posts_db else 1
-    new_post = {
-        "id": new_id,
-        "author": post.author,
-        "title": post.title,
-        "content": post.content,
-        "date_posted": "7 Feb 2025",
-    }
-    posts_db.append(new_post)
-    return new_post
 
 
 # DATABASE #########################################################################
@@ -184,6 +140,18 @@ def get_user_posts(user_id: int, db: Annotated[Session, Depends(get_db)]):
     return posts
 
 
+# get post by id
+@app.get("/api/post/{post_id}", response_model=PostResponse)
+def get_post_by_id(post_id: int, db: Annotated[Session, Depends(get_db)]):
+    result = db.execute(select(models.Post).where(models.Post.id == post_id))
+    post = result.scalars().first()
+    if not post:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Post doesnt exist!!!!"
+        )
+    return post
+
+
 # get all posts
 @app.get("/api/allPosts", response_model=list[PostResponse])
 def get_all_posts(db: Annotated[Session, Depends(get_db)]):
@@ -216,3 +184,88 @@ def create_post(post: PostCreate, db: Annotated[Session, Depends(get_db)]):
     db.commit()
     db.refresh(new_post)
     return new_post
+
+
+# put
+@app.put("/api/posts/{post.id}", response_model=PostResponse)
+def update_post_full(
+    post_id: int, post_data: PostCreate, db: Annotated[Session, Depends(get_db)]
+):
+    post_exists_res = db.execute(select(models.Post).where(models.Post.id == post_id))
+    post = post_exists_res.scalars().first()
+    if not post:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Post not found to update!"
+        )
+
+    # check if the new user exists
+    if post_data.user_id != post.user_id:
+        result = db.execute(
+            select(models.User).where(models.User.id == post_data.user_id)
+        )
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(
+                status_type=status.HTTP_404_NOT_FOUND,
+                detail="User not found for update!",
+            )
+    post.title = post_data.title
+    post.content = post_data.content
+    post.user_id = post_data.user_id
+
+    db.commit()
+    db.refresh(post)
+    return post
+
+
+# patch
+@app.patch("/api/posts/{post.id}", response_model=PostResponse)
+def patch_post(
+    post_id: int, post_data: PostUpdate, db: Annotated[Session, Depends(get_db)]
+):
+
+    result = db.execute(select(models.Post).where(models.Post.id == post_id))
+    post = result.scalars().first()
+    if not post:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Post not found FOR PATCH"
+        )
+
+    # important: returns a dictionary of what the client actually sent in. so if the user only updated "content" then it wont set title to None
+    # update_data = post_data.model_dump(exclude_unset=True)
+    update_data = post_data.model_dump(exclude_unset=True)
+
+    # for post we update each field with the new value from updateData
+    for field, value in update_data.items():
+        setattr(post, field, value)
+
+        db.commit()
+        db.refresh(post)
+        return post
+
+
+# delete post
+@app.delete("/api/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_post(post_id: int, db: Annotated[Session, Depends(get_db)]):
+    result = db.execute(select(models.Post).where(models.Post.id == post_id))
+    post = result.scalars().first()
+    if not post:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Post no found while deleting"
+        )
+
+    db.delete(post)
+    db.commit()
+
+
+# delete user
+@app.delete("/api/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, db: Annotated[Session, Depends(get_db)]):
+    result = db.execute(select(models.User).where(models.User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found for delete"
+        )
+    db.delete(user)
+    db.commit()

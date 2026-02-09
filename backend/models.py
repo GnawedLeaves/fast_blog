@@ -23,13 +23,15 @@ class User(Base):
     )
     # one to many rs
     # back_populates links to the author field on the post
-    posts: Mapped[list[Post]] = relationship(back_populates="author")
+    posts: Mapped[list[Post]] = relationship(
+        back_populates="author", cascade="all, delete-orphan"
+    )
 
-    # if user got image then use that image if not then use default
+    # it will auto generate the path for you so we just need to update image_file with the path of the new pic
     @property
     def image_path(self) -> str:
         if self.image_file:
-            return f"/media/profile_pics/{self.image_file}"
+            return f"../src/media/profile_pics/{self.image_file}"
         return "../src/media/profile_pics/default.jpg"
 
 
