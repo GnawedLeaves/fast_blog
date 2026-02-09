@@ -27,6 +27,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from starlette.exceptions import HTTPException
+
 import models
 from database import Base, engine, get_db
 
@@ -82,76 +84,69 @@ def get_html_post():
 
 
 # DATABASE #########################################################################
-# get user by id from db
+# get user by id
 @app.get("/api/users/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Annotated[Session, Depends(get_db)]):
-    result = db.execute(select(models.User).where(models.User.id == user_id))
+async def get_user(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(select(models.User).where(models.User.id == user_id))
     user = result.scalars().first()
     if user:
         return user
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND, detail="User not found!!"
-    )
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-
-# user creation
-@app.post(
-    "/api/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED
-)
 
 # before runnign func call getdb and pass result as db in args, will be cleaned up after query due to what we defined it in database.py
-def create_user(user: UserCreate, db: Annotated[Session, Depends(get_db)]):
-
-    # check if username exists
-    result = db.execute(
-        select(models.User).where(models.User.username == user.username)
+@app.post(
+    "/api/users",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_user(user: UserCreate, db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(
+        select(models.User).where(models.User.username == user.username),
     )
-    # gets the first user obj or none if no match
     existing_user = result.scalars().first()
-
-    # db already has a constraint so stops it before it hits db
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already exists!!!",
+            detail="Username already exists",
         )
 
-    # check if email exists
-    result = db.execute(
-        select(models.User).where(models.User.username == user.username)
+    result = await db.execute(
+        select(models.User).where(models.User.email == user.email),
     )
     existing_email = result.scalars().first()
-
     if existing_email:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists hehe"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
         )
 
     new_user = models.User(
         username=user.username,
         email=user.email,
     )
-
     db.add(new_user)
-    db.commit()
-    # not neccessary coz sqlalchemy will do it for you
-    db.refresh(new_user)
-
-    # pydantic will auto convvert to Userresponse
+    await db.commit()
+    await db.refresh(new_user)
     return new_user
 
 
 # get user posts
-@app.get("/api/getUserPosts/{user_id}", response_model=list[PostResponse])
-def get_user_posts(user_id: int, db: Annotated[Session, Depends(get_db)]):
-    result = db.execute(select(models.User).where(models.User.id == user_id))
+@app.get("/api/users/{user_id}/posts", response_model=list[PostResponse])
+async def get_user_posts(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+    # does not need selectinload because it doesnt have a rs
+    result = await db.execute(select(models.User).where(models.User.id == user_id))
     user = result.scalars().first()
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found!"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
         )
-
-    result = db.execute(select(models.Post).where(models.Post.user_id == user_id))
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .where(models.Post.user_id == user_id),
+    )
     posts = result.scalars().all()
     return posts
 
@@ -184,36 +179,49 @@ async def get_all_posts(db: Annotated[AsyncSession, Depends(get_db)]):
 
 # get all users
 @app.get("/api/allUsers", response_model=list[UserResponse])
-def get_all_users(db: Annotated[Session, Depends(get_db)]):
-    result = db.execute(select(models.User))
+async def get_all_users(db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(select(models.User))
     users = result.scalars().all()
     return users
 
 
 # create post
 @app.post(
-    "/api/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED
+    "/api/posts",
+    response_model=PostResponse,
+    status_code=status.HTTP_201_CREATED,
 )
-def create_post(post: PostCreate, db: Annotated[Session, Depends(get_db)]):
-    result = db.execute(select(models.User).where(models.User.id == post.user_id))
+async def create_post(post: PostCreate, db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(
+        select(models.User).where(models.User.id == post.user_id),
+    )
     user = result.scalars().first()
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
         )
-    new_post = models.Post(title=post.title, content=post.content, user_id=post.user_id)
+
+    new_post = models.Post(
+        title=post.title,
+        content=post.content,
+        user_id=post.user_id,
+    )
     db.add(new_post)
-    db.commit()
-    db.refresh(new_post)
+    await db.commit()
+    # refreshes the post and fetch the author relationship
+    await db.refresh(new_post, attribute_names=["author"])
     return new_post
 
 
 # put
 @app.put("/api/posts/{post.id}", response_model=PostResponse)
-def update_post_full(
-    post_id: int, post_data: PostCreate, db: Annotated[Session, Depends(get_db)]
+async def update_post_full(
+    post_id: int, post_data: PostCreate, db: Annotated[AsyncSession, Depends(get_db)]
 ):
-    post_exists_res = db.execute(select(models.Post).where(models.Post.id == post_id))
+    post_exists_res = await db.execute(
+        select(models.Post).where(models.Post.id == post_id)
+    )
     post = post_exists_res.scalars().first()
     if not post:
         raise HTTPException(
@@ -235,18 +243,18 @@ def update_post_full(
     post.content = post_data.content
     post.user_id = post_data.user_id
 
-    db.commit()
-    db.refresh(post)
+    await db.commit()
+    await db.refresh(post, attribute_names=["author"])
     return post
 
 
 # patch
 @app.patch("/api/posts/{post.id}", response_model=PostResponse)
-def patch_post(
-    post_id: int, post_data: PostUpdate, db: Annotated[Session, Depends(get_db)]
+async def patch_post(
+    post_id: int, post_data: PostUpdate, db: Annotated[AsyncSession, Depends(get_db)]
 ):
 
-    result = db.execute(select(models.Post).where(models.Post.id == post_id))
+    result = await db.execute(select(models.Post).where(models.Post.id == post_id))
     post = result.scalars().first()
     if not post:
         raise HTTPException(
@@ -261,33 +269,33 @@ def patch_post(
     for field, value in update_data.items():
         setattr(post, field, value)
 
-        db.commit()
-        db.refresh(post)
+        await db.commit()
+        await db.refresh(post)
         return post
 
 
 # delete post
 @app.delete("/api/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_post(post_id: int, db: Annotated[Session, Depends(get_db)]):
-    result = db.execute(select(models.Post).where(models.Post.id == post_id))
+async def delete_post(post_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(select(models.Post).where(models.Post.id == post_id))
     post = result.scalars().first()
     if not post:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Post no found while deleting"
         )
 
-    db.delete(post)
-    db.commit()
+    await db.delete(post)
+    await db.commit()
 
 
 # delete user
 @app.delete("/api/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(user_id: int, db: Annotated[Session, Depends(get_db)]):
-    result = db.execute(select(models.User).where(models.User.id == user_id))
+async def delete_user(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(select(models.User).where(models.User.id == user_id))
     user = result.scalars().first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found for delete"
         )
-    db.delete(user)
-    db.commit()
+    await db.delete(user)
+    await db.commit()
