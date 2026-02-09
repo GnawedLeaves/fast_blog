@@ -249,12 +249,16 @@ async def update_post_full(
 
 
 # patch
-@app.patch("/api/posts/{post.id}", response_model=PostResponse)
+@app.patch("/api/posts/{post_id}", response_model=PostResponse)
 async def patch_post(
     post_id: int, post_data: PostUpdate, db: Annotated[AsyncSession, Depends(get_db)]
 ):
 
-    result = await db.execute(select(models.Post).where(models.Post.id == post_id))
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .where(models.Post.id == post_id)
+    )
     post = result.scalars().first()
     if not post:
         raise HTTPException(
@@ -269,9 +273,9 @@ async def patch_post(
     for field, value in update_data.items():
         setattr(post, field, value)
 
-        await db.commit()
-        await db.refresh(post)
-        return post
+    await db.commit()
+    await db.refresh(post, attribute_names=["author"])
+    return post
 
 
 # delete post
