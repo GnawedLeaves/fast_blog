@@ -1,22 +1,17 @@
-import axios from "axios";
 import dayjs from "dayjs";
 import { useEffect, useState } from "react";
 import "./App.css";
+import PostController from "./service/PostController";
 import type { Post } from "./types";
 
 function App() {
   const [posts, setPosts] = useState<Post[]>([]);
 
-  const BASE_URL = "http://127.0.0.1:8000";
-  const handleGetPosts = () => {
-    axios
-      .get(BASE_URL + "/api/allPosts")
-      .then((response) => {
-        setPosts(response.data);
-      })
-      .catch((error) => {
-        console.error("There was an error fetching the posts uh oh", error);
-      });
+  const { getAllPosts } = PostController();
+
+  const handleGetPosts = async () => {
+    const posts = await getAllPosts();
+    setPosts(posts);
   };
 
   useEffect(() => {
